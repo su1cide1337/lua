@@ -1,0 +1,115 @@
+local rbotAA_ref = gui.Reference("Ragebot", "Anti-Aim")
+
+local my_enable = gui.Checkbox(rbotAA_ref, "lua_3way_enable", "Enable 3-Way Yaw", false)
+local my_offset_left = gui.Slider(rbotAA_ref, "lua_3way_offset_left", "Left Offset Angle", -32, -180, 180)
+local my_offset_center = gui.Slider(rbotAA_ref, "lua_3way_offset_center", "Center Offset Angle", 0, -180, 180)
+local my_offset_right = gui.Slider(rbotAA_ref, "lua_3way_offset_right", "Right Offset Angle", 32, -180, 180)
+
+local my_key_left = gui.Keybox(rbotAA_ref, "lua_manual_left_key", "Manual Left Key", 0)
+local my_key_right = gui.Keybox(rbotAA_ref, "lua_manual_right_key", "Manual Right Key", 0)
+local my_indicators_enable = gui.Checkbox(rbotAA_ref, "lua_manual_indicators", "Show Indicators", true)
+
+local current_index = 0
+local manual_direction = 0
+local left_was_down = false
+local right_was_down = false
+
+local font = draw.CreateFont("Verdana", 26, 400)
+
+callbacks.Register("PreMove", function(cmd)
+    if not gui.GetValue("rbot.master") then return end
+    if not gui.GetValue("rbot.antiaim.enabled") then return end
+
+    if my_enable:GetValue() then
+        local base_angle = 0
+        if manual_direction == 1 then
+            base_angle = -90
+        elseif manual_direction == 2 then
+            base_angle = 90
+        end
+
+        current_index = (current_index + 1) % 3
+
+        local jitter_offset = 0
+        if current_index == 0 then
+            jitter_offset = my_offset_left:GetValue()
+        elseif current_index == 1 then
+            jitter_offset = my_offset_center:GetValue()
+        elseif current_index == 2 then
+            jitter_offset = my_offset_right:GetValue()
+        end
+
+        gui.SetValue("rbot.antiaim.yawoffset", base_angle + jitter_offset)
+    end
+end)
+
+callbacks.Register("Draw", function()
+    local yaw_active = my_enable:GetValue()
+    my_offset_left:SetInvisible(not yaw_active)
+    my_offset_center:SetInvisible(not yaw_active)
+    my_offset_right:SetInvisible(not yaw_active)
+    my_key_left:SetInvisible(not yaw_active)
+    my_key_right:SetInvisible(not yaw_active)
+    my_indicators_enable:SetInvisible(not yaw_active)
+
+    if not yaw_active then
+        manual_direction = 0
+        return
+    end
+
+    local left_key = my_key_left:GetValue()
+    local right_key = my_key_right:GetValue()
+
+    if left_key and left_key > 0 then
+        local left_down = input.IsButtonDown(left_key)
+        if left_down and not left_was_down then
+            if manual_direction == 1 then
+                manual_direction = 0
+            else
+                manual_direction = 1
+            end
+        end
+        left_was_down = left_down
+    else
+        left_was_down = false
+    end
+
+    if right_key and right_key > 0 then
+        local right_down = input.IsButtonDown(right_key)
+        if right_down and not right_was_down then
+            if manual_direction == 2 then
+                manual_direction = 0
+            else
+                manual_direction = 2
+            end
+        end
+        right_was_down = right_down
+    else
+        right_was_down = false
+    end
+
+    if my_indicators_enable:GetValue() then
+        local local_player = entities.GetLocalPlayer()
+        if not local_player then return end
+
+        local screen_w, screen_h = draw.GetScreenSize()
+        local center_x = screen_w / 2
+        local center_y = screen_h / 2
+
+        draw.SetFont(font)
+
+        if manual_direction == 1 then
+            draw.Color(255, 255, 255, 255)
+        else
+            draw.Color(120, 120, 120, 100)
+        end
+        draw.TextShadow(center_x - 50, center_y - 15, "<")
+
+        if manual_direction == 2 then
+            draw.Color(255, 255, 255, 255)
+        else
+            draw.Color(120, 120, 120, 100)
+        end
+        draw.TextShadow(center_x + 38, center_y - 15, ">")
+    end
+end)
