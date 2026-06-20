@@ -1,0 +1,183 @@
+local rbotAA_ref = gui.Reference("Ragebot", "Anti-Aim")
+
+local auto_stop_en = gui.Checkbox(rbotAA_ref, "m_auto_stop", "Auto Stop", false)
+local spin_en = gui.Checkbox(rbotAA_ref, "m_spin_en", "Spin", false)
+local spin_speed = gui.Slider(rbotAA_ref, "m_spin_speed", "Spin Speed", 15, 1, 50)
+local second_pitch = gui.Combobox(rbotAA_ref, "m_second_pitch", "Second Pitch Angle", "Off", "Down", "Up", "Zero")
+local pitch_speed = gui.Slider(rbotAA_ref, "m_pitch_speed", "Pitch Speed", 15, 1, 50)
+
+local customYawAngle = gui.Slider(rbotAA_ref, "customYawAngle", "Custom Yaw Angle", 0, -180, 180)
+local key_left    = gui.Keybox(rbotAA_ref, "manual_left",    "Manual Left",    0)
+local key_right   = gui.Keybox(rbotAA_ref, "manual_right",   "Manual Right",   0)
+local key_forward = gui.Keybox(rbotAA_ref, "manual_forward", "Manual Forward", 0)
+
+local last_shot = 0
+local spin_timer = 0
+local pitch_timer = 0
+local is_back = false
+local is_second_pitch = false
+local last_map = ""
+
+local user_pitch = gui.GetValue("rbot.antiaim.pitch")
+local user_yaw = gui.GetValue("rbot.antiaim.yaw")
+local script_controlled_pitch = false
+local script_controlled_yaw = false
+
+local manual_override = 0  -- 0=Desligado, 1=Esquerda, 2=Direita, 3=Frente
+
+local function check_manual_keys()
+    if key_left:GetValue() ~= 0 and input.IsButtonPressed(key_left:GetValue()) then
+        manual_override = (manual_override == 1) and 0 or 1
+    elseif key_right:GetValue() ~= 0 and input.IsButtonPressed(key_right:GetValue()) then
+        manual_override = (manual_override == 2) and 0 or 2
+    elseif key_forward:GetValue() ~= 0 and input.IsButtonPressed(key_forward:GetValue()) then
+        manual_override = (manual_override == 3) and 0 or 3
+    end
+end
+
+callbacks.Register("PreMove", function(cmd)
+    if not gui.GetValue("rbot.master") then return end
+    if not gui.GetValue("rbot.antiaim.enabled") then return end
+
+    local va = cmd:GetViewAngles()
+    local yaw_modified = false
+
+    if customYawAngle:GetValue() ~= 0 then
+        va.y = va.y + customYawAngle:GetValue()
+        yaw_modified = true
+    end
+
+    if manual_override ~= 0 then
+        if manual_override == 1 then
+            va.y = va.y - 90   -- Esquerda
+        elseif manual_override == 2 then
+            va.y = va.y + 90   -- Direita
+        elseif manual_override == 3 then
+            va.y = va.y + 180  -- Frente/Trás
+        end
+        yaw_modified = true
+    end
+
+    if yaw_modified then
+        cmd:SetViewAngles(va)
+    end
+end)
+
+callbacks.Register("CreateMove", function(cmd)
+    if not cmd then return end
+    if bit.band(cmd:GetButtons(), 1) ~= 0 then
+        last_shot = globals.RealTime()
+    end
+end)
+
+local function draw_arrow(points, active)
+    if active then
+        draw.Color(0, 255, 220, 220) -- Cor ativa
+    else
+        draw.Color(0, 0, 0, 80) -- Cor inativa
+    end
+
+    draw.Triangle(points[1][1], points[1][2], points[2][1], points[2][2], points[3][1], points[3][2])
+    draw.Triangle(points[1][1], points[1][2], points[3][1], points[3][2], points[4][1], points[4][2])
+end
+
+local function draw_manual_indicators()
+    if not gui.GetValue("rbot.master") then return end
+
+    local sw, sh = draw.GetScreenSize()
+    if not sw or not sh then return end
+    
+    local cx, cy = sw / 2, sh / 2
+    local DIST = 45
+    local LEN  = 35
+    local W    = 15
+    local IN   = -10
+
+    draw_arrow({
+        {cx - (DIST + LEN), cy}, 
+        {cx - DIST, cy - W}, 
+        {cx - (DIST - IN), cy}, 
+        {cx - DIST, cy + W}
+    }, manual_override == 1)
+
+    draw_arrow({
+        {cx + (DIST + LEN), cy}, 
+        {cx + DIST, cy - W}, 
+        {cx + (DIST - IN), cy}, 
+        {cx + DIST, cy + W}
+    }, manual_override == 2)
+
+    draw_arrow({
+        {cx, cy - (DIST + LEN)}, 
+        {cx + W, cy - DIST}, 
+        {cx, cy - (DIST - IN)}, 
+        {cx - W, cy - DIST}
+    }, manual_override == 3)
+end
+
+callbacks.Register("Draw", function()
+    check_manual_keys()
+    draw_manual_indicators()
+
+    local current_map = engine.GetMapName()
+    if current_map ~= last_map then
+        spin_timer = globals.RealTime()
+        pitch_timer = globals.RealTime()
+        script_controlled_pitch = false
+        script_controlled_yaw = false
+        last_map = current_map
+    end
+
+    local local_player = entities.GetLocalPlayer()
+    if not local_player or not local_player:IsAlive() then return end
+
+    local do_autostop = auto_stop_en:GetValue() and (globals.RealTime() - last_shot <= 0.3)
+    local do_spin = spin_en:GetValue()
+    local do_jitter = second_pitch:GetValue() ~= 0
+
+    if do_autostop then
+        script_controlled_pitch = true
+        gui.SetValue("rbot.antiaim.pitch", "Off")
+    elseif do_jitter then
+        script_controlled_pitch = true
+        local p_interval = (51 - pitch_speed:GetValue()) * 0.01
+        if globals.RealTime() - pitch_timer >= p_interval then
+            is_second_pitch = not is_second_pitch
+            pitch_timer = globals.RealTime()
+        end
+        gui.SetValue("rbot.antiaim.pitch", is_second_pitch and second_pitch:GetValue() or user_pitch)
+    else
+        if script_controlled_pitch then
+            gui.SetValue("rbot.antiaim.pitch", user_pitch)
+            script_controlled_pitch = false
+        else
+            user_pitch = gui.GetValue("rbot.antiaim.pitch")
+        end
+    end
+
+    if do_autostop then
+        script_controlled_yaw = true
+        gui.SetValue("rbot.antiaim.yaw", 0)
+    elseif do_spin then
+        script_controlled_yaw = true
+        local s_interval = (51 - spin_speed:GetValue()) * 0.01
+        if globals.RealTime() - spin_timer >= s_interval then
+            is_back = not is_back
+            spin_timer = globals.RealTime()
+        end
+        gui.SetValue("rbot.antiaim.yaw", is_back and 180 or 0)
+    else
+        if script_controlled_yaw then
+            gui.SetValue("rbot.antiaim.yaw", user_yaw)
+            script_controlled_yaw = false
+        else
+            user_yaw = gui.GetValue("rbot.antiaim.yaw")
+        end
+    end
+end)
+
+callbacks.Register("Unload", function()
+    manual_override = 0
+end)
+
+print("Anti-Aim enhanced! by 1722% capa sem hack")
